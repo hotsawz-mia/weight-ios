@@ -16,62 +16,29 @@ class HealthKitManager: ObservableObject {
             return
         }
 
-        guard HKHealthStore.isHealthDataAvailable() else {
-            print("❌ HealthKit is not available on this device.")
-            completion(false)
-            return
-        }
+        if HKHealthStore.isHealthDataAvailable() {
+            let typesToRead: Set = [weightType]
 
-        // Check current authorization status
-        let authorizationStatus = healthStore.authorizationStatus(for: weightType)
-
-        switch authorizationStatus {
-        case .sharingAuthorized:
-            print("✅ HealthKit access is already granted.")
-            completion(true)
-
-        case .notDetermined:
-            print("⚠️ HealthKit access is NOT granted. Requesting permission...")
-            self.requestAuthorization { success, _ in
-                completion(success)
-            }
-
-        default:
-            print("⚠️ HealthKit access previously denied or restricted.")
-            completion(false)
-        }
-    }
-
-    // MARK: - Request Authorization from the user
-    func requestAuthorization(completion: @escaping (Bool, Error?) -> Void) {
-        guard let weightType = HKObjectType.quantityType(forIdentifier: .bodyMass) else {
-            print("❌ HealthKit weight type not available.")
-            completion(false, nil)
-            return
-        }
-
-        let typesToRead: Set = [weightType]
-
-        print("🔍 Requesting HealthKit permission...")
-
-        healthStore.requestAuthorization(toShare: [], read: typesToRead) { success, error in
-            DispatchQueue.main.async {
-                if success {
-                    print("✅ HealthKit permissions granted.")
-                } else {
-                    print("❌ HealthKit authorization failed: \(error?.localizedDescription ?? "Unknown error")")
+            print("🔍 Requesting read access to HealthKit (non-interactive if already granted)")
+            healthStore.requestAuthorization(toShare: [], read: typesToRead) { success, error in
+                DispatchQueue.main.async {
+                    if success {
+                        print("✅ HealthKit read permission confirmed.")
+                    } else {
+                        print("❌ Failed to confirm HealthKit access: \(error?.localizedDescription ?? "Unknown error")")
+                    }
+                    completion(success)
                 }
-                completion(success, error)
             }
+        } else {
+            print("❌ Health data not available on this device.")
+            completion(false)
         }
     }
 
     // MARK: - Fetch Weight Data from HealthKit
     func fetchWeightData(daysToIgnore: Int = 7) {
-        guard let weightType = HKQuantityType.quantityType(forIdentifier: .bodyMass) else {
-            print("❌ Could not get quantity type for body mass.")
-            return
-        }
+        guard let weightType = HKQuantityType.quantityType(forIdentifier: .bodyMass) else { return }
 
         let startDate = Calendar.current.date(byAdding: .year, value: -15, to: Date())
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: Date(), options: .strictStartDate)
@@ -84,13 +51,8 @@ class HealthKitManager: ObservableObject {
                 NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
             ]
         ) { _, samples, error in
-            if let error = error {
-                print("❌ Error fetching weight samples: \(error.localizedDescription)")
-                return
-            }
-
-            guard let samples = samples as? [HKQuantitySample] else {
-                print("❌ Unable to cast samples to HKQuantitySample")
+            guard let samples = samples as? [HKQuantitySample], error == nil else {
+                print("❌ Failed to fetch weight data: \(error?.localizedDescription ?? "Unknown error")")
                 return
             }
 
@@ -100,7 +62,10 @@ class HealthKitManager: ObservableObject {
 
             DispatchQueue.main.async {
                 self.weightData = weightData
-                print("✅ Retrieved \(weightData.count) weight entries from HealthKit.")
+                print("📦 HealthKit returned \(weightData.count) weight samples")
+                if let first = weightData.first {
+                    print("👉 Most recent: \(first.1) kg on \(first.0)")
+                }
             }
         }
 
@@ -113,7 +78,6 @@ class HealthKitManager: ObservableObject {
         let latestWeight = latestWeightSample.weight
 
         let cutoffDate = Calendar.current.date(byAdding: .day, value: -daysToIgnore, to: Date())!
-
         let pastWeights = weightData.filter { $0.date < cutoffDate }
 
         let closestWeightEntry = pastWeights.min(by: {

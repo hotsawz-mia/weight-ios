@@ -1,10 +1,24 @@
+
 import SwiftUI
+import UIKit // Needed for opening Settings
+
+
 
 struct ContentView: View {
     @StateObject private var healthKitManager = HealthKitManager()
     @State private var lastClosestWeight: (date: Date, weight: Double)? = nil
     @State private var currentEmoji: String = "🎉"
+    @State private var showPermissionAlert = false
+    @State private var isHealthKitAuthorized = true
 
+    
+    enum DateDisplayMode {
+        case daysAgo
+        case ageAtTime
+    }
+
+    @State private var dateDisplayMode: DateDisplayMode = .daysAgo
+    
     let celebratoryEmojis = ["🎉", "🎊", "🏆", "🥳", "👏", "🚀", "🎈", "✨", "💪"]
     
     var body: some View {
@@ -40,10 +54,28 @@ struct ContentView: View {
                                 .font(.headline)
                                 .foregroundColor(.secondary)
 
-                            Text("\(daysAgo(from: closestWeight.date)) days ago")
-                                .font(.largeTitle)
-                                .fontWeight(.bold)
-                                .foregroundColor(.primary)
+                            HStack(spacing: 8) {
+                                Text(displayString(for: closestWeight.date))
+                                    .font(.largeTitle)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.primary)
+
+                                Button(action: {
+                                    withAnimation {
+                                        switch dateDisplayMode {
+                                        case .daysAgo:
+                                            dateDisplayMode = .ageAtTime
+                                        case .ageAtTime:
+                                            dateDisplayMode = .daysAgo
+                                        }
+                                    }
+                                }) {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .foregroundColor(.gray)
+                                        .imageScale(.medium)
+                                }
+                                .buttonStyle(.plain)
+                            }
 
                             if abs(difference) > 0.1 {
                                 Text("You're \(String(format: "%.1f", abs(difference))) kg away from matching that weight.")
@@ -68,13 +100,29 @@ struct ContentView: View {
                             .foregroundColor(.secondary)
                     }
 
+                    // MARK: - HealthKit Permission Badge
+                    if !isHealthKitAuthorized {
+                        Label("Health access not granted", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                            .font(.caption)
+                    }
+
                     // MARK: - Buttons
                     VStack(spacing: 16) {
                         Button(action: {
                             print("🔄 Refresh button tapped")
-                            lastClosestWeight = healthKitManager.findLastClosestWeight()
-                            currentEmoji = randomCelebratoryEmoji()
-                            print("🧠 New closest weight: \(String(describing: lastClosestWeight))")
+                            healthKitManager.checkHealthKitAuthorization { authorized in
+                                isHealthKitAuthorized = authorized
+                                if authorized {
+                                    print("✅ Refresh authorized. Fetching and updating.")
+                                    healthKitManager.fetchWeightData()
+                                    lastClosestWeight = healthKitManager.findLastClosestWeight()
+                                    currentEmoji = randomCelebratoryEmoji()
+                                } else {
+                                    print("❌ HealthKit access not granted. Prompt user.")
+                                    showPermissionAlert = true
+                                }
+                            }
                         }) {
                             Text("Refresh")
                                 .font(.headline)
@@ -103,31 +151,48 @@ struct ContentView: View {
             }
             .padding()
             .onAppear {
-                
-                    print("📡 Checking HealthKit authorization…")
-                    healthKitManager.checkHealthKitAuthorization { authorized in
-                        print("🔁 Authorization result: \(authorized)")
-                        if authorized {
-                            print("🚀 Fetching data from HealthKit")
-                            healthKitManager.fetchWeightData()
-                        } else {
-                            print("❌ Not authorized to read HealthKit data.")
-                        }
-                    }
-                healthKitManager.checkHealthKitAuthorization { authorized in
-                    if authorized {
-                        print("✅ HealthKit access confirmed.")
-                        healthKitManager.fetchWeightData()
-                    } else {
-                        print("⚠️ HealthKit access missing. Prompt user to re-enable it in Settings.")
-                    }
+                checkAndFetchHealthData()
+            }
+        }
+        .alert("Health Access Needed", isPresented: $showPermissionAlert) {
+            Button("Open Health App") {
+                // While we can't deep link to Health permissions, we clarify instructions in the message below
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
                 }
             }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("""
+Last Weight needs access to your weight data in the Health app to work properly.
+
+To enable it:
+1. Open the Health app
+2. Tap your profile (top right)
+3. Go to Privacy > Apps > Last Weight
+4. Enable Body Mass access
+""")
         }
     }
     
-    
     // MARK: - Helpers
+
+    func checkAndFetchHealthData() {
+        print("📡 Checking HealthKit authorization...")
+        healthKitManager.checkHealthKitAuthorization { authorized in
+            isHealthKitAuthorized = authorized
+            print("🔁 Authorization result: \(authorized)")
+            if authorized {
+                print("🚀 Fetching data from HealthKit")
+                healthKitManager.fetchWeightData()
+                lastClosestWeight = healthKitManager.findLastClosestWeight()
+            } else {
+                print("⚠️ HealthKit access missing.")
+                showPermissionAlert = true
+            }
+        }
+    }
+
     func formatDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
@@ -137,6 +202,7 @@ struct ContentView: View {
     func randomCelebratoryEmoji() -> String {
         celebratoryEmojis.randomElement() ?? "🎉"
     }
+
     func daysAgo(from date: Date) -> Int {
         Calendar.current.dateComponents([.day], from: date, to: Date()).day ?? 0
     }
@@ -145,6 +211,19 @@ struct ContentView: View {
         let dateString = formatDate(date)
         let days = daysAgo(from: date)
         return "\(dateString) (\(days) days ago)"
+    }
+    
+    func displayString(for date: Date) -> String {
+        switch dateDisplayMode {
+        case .daysAgo:
+            let days = daysAgo(from: date)
+            return "\(days) days ago"
+        case .ageAtTime:
+            let ageComponents = Calendar.current.dateComponents([.year, .month], from: DateComponents(calendar: .current, year: 1980, month: 1, day: 18).date!, to: date)
+            let years = ageComponents.year ?? 0
+            let months = ageComponents.month ?? 0
+            return "Age: \(years)y \(months)m"
+        }
     }
 }
 
