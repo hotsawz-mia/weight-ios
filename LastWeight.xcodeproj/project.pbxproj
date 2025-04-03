@@ -415,7 +415,10 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = LastWeight/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Last Weight";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app uses your weight data to show trends and comparisons from your past.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "We use your weight data to show past trends and progress over time.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Last Weight does not write any data to HealthKit, but access is required to read your past weight history.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "We use your photo library to show past selfies that match your weight history.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We use your photo library to show past selfies that match your weight history.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -448,7 +451,10 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = LastWeight/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Last Weight";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app uses your weight data to show trends and comparisons from your past.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "We use your weight data to show past trends and progress over time.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Last Weight does not write any data to HealthKit, but access is required to read your past weight history.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "We use your photo library to show past selfies that match your weight history.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We use your photo library to show past selfies that match your weight history.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

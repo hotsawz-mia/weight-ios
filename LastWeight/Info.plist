@@ -1,10 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict>
-	<key>NSHealthUpdateUsageDescription</key>
-	<string>Last Weight does not write any data to HealthKit, but access is required to read your past weight history.</string>
-	<key>NSHealthShareUsageDescription</key>
-	<string>We use your weight data to show past trends and progress over time.</string>
-</dict>
+<dict/>
 </plist>

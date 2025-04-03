@@ -1,12 +1,20 @@
 import HealthKit
 import SwiftUI
+import Photos // make sure this is imported at the top
+
+func hasLimitedPhotoAccess() -> Bool {
+    return PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited
+}
+
 
 // MARK: - HealthKitManager: Handles permissions and weight data from HealthKit
 class HealthKitManager: ObservableObject {
     private let healthStore = HKHealthStore()
+    private let imageManager = PHCachingImageManager()
 
     // Publishes weight data to SwiftUI views that use this manager
     @Published var weightData: [(date: Date, weight: Double)] = []
+    @Published var selfieForDate: UIImage? = nil
 
     // MARK: - Authorization: Check if app has access to HealthKit data
     func checkHealthKitAuthorization(completion: @escaping (Bool) -> Void) {
@@ -64,7 +72,8 @@ class HealthKitManager: ObservableObject {
                 self.weightData = weightData
                 print("📦 HealthKit returned \(weightData.count) weight samples")
                 if let first = weightData.first {
-                    print("👉 Most recent: \(first.1) kg on \(first.0)")
+                    let (date, weight) = first
+                    print("👉 Most recent: \(weight) kg on \(date)")
                 }
             }
         }
@@ -85,5 +94,83 @@ class HealthKitManager: ObservableObject {
         })
 
         return closestWeightEntry
+    }
+
+    // MARK: - Fetch Selfie Closest to a Given Date
+    func fetchClosestSelfie(to targetDate: Date) {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+
+        switch status {
+        case .authorized, .limited:
+            break // Carry on below
+        case .notDetermined:
+            print("📸 Requesting photo library permission...")
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { newStatus in
+                DispatchQueue.main.async {
+                    if newStatus == .authorized || newStatus == .limited {
+                        print("✅ Photo access granted after request.")
+                        self.fetchClosestSelfie(to: targetDate) // Try again now that we have access
+                    } else {
+                        print("❌ Photo access denied after request.")
+                    }
+                }
+            }
+            return
+        case .denied, .restricted:
+            print("❌ Photo access denied or restricted.")
+            return
+        @unknown default:
+            print("❓ Unknown photo permission status.")
+            return
+        }
+
+        // 👇 From here, everything you already had stays the same:
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+
+        let selfies = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .smartAlbumSelfPortraits, options: nil)
+
+        guard let album = selfies.firstObject else {
+            print("❌ No selfies album found.")
+            return
+        }
+
+        let assets = PHAsset.fetchAssets(in: album, options: options)
+        guard assets.count > 0 else {
+            print("❌ No selfies found in album.")
+            return
+        }
+
+        var closestAsset: PHAsset?
+        var smallestDiff: TimeInterval = .greatestFiniteMagnitude
+
+        assets.enumerateObjects { asset, _, _ in
+            if let creationDate = asset.creationDate {
+                let diff = abs(creationDate.timeIntervalSince(targetDate))
+                let oneYear: TimeInterval = 60 * 60 * 24 * 365
+
+                if diff < smallestDiff && diff <= oneYear {
+                    smallestDiff = diff
+                    closestAsset = asset
+                }
+            }
+        }
+
+        if let asset = closestAsset {
+            print("📸 Closest selfie: \(asset.creationDate ?? Date())")
+            let size = CGSize(width: 200, height: 200)
+            imageManager.requestImage(for: asset, targetSize: size, contentMode: .aspectFill, options: nil) { image, _ in
+                DispatchQueue.main.async {
+                    if let image = image {
+                        self.selfieForDate = image
+                        print("✅ Loaded selfie image")
+                    } else {
+                        print("❌ Failed to load image from asset")
+                    }
+                }
+            }
+        } else {
+            print("❌ No suitable selfie found within 1 year.")
+        }
     }
 }
