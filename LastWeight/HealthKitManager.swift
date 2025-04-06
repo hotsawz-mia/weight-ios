@@ -2,17 +2,17 @@ import HealthKit
 import SwiftUI
 import Photos // make sure this is imported at the top
 
+// MARK: - Utility to detect limited photo access
 func hasLimitedPhotoAccess() -> Bool {
     return PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited
 }
 
-
 // MARK: - HealthKitManager: Handles permissions and weight data from HealthKit
 class HealthKitManager: ObservableObject {
-    private let healthStore = HKHealthStore()
-    private let imageManager = PHCachingImageManager()
+    private let healthStore = HKHealthStore() // Interface to HealthKit
+    private let imageManager = PHCachingImageManager() // Manages photo caching and retrieval
 
-    // Publishes weight data to SwiftUI views that use this manager
+    // Publishes weight data and selfie image to any observing SwiftUI views
     @Published var weightData: [(date: Date, weight: Double)] = []
     @Published var selfieForDate: UIImage? = nil
 
@@ -44,11 +44,14 @@ class HealthKitManager: ObservableObject {
         }
     }
 
-    // MARK: - Fetch Weight Data from HealthKit
-    func fetchWeightData(daysToIgnore: Int = 7) {
-        guard let weightType = HKQuantityType.quantityType(forIdentifier: .bodyMass) else { return }
+    // MARK: - Fetch Weight Data from HealthKit with optional completion handler
+    func fetchWeightData(daysToIgnore: Int = 7, completion: (() -> Void)? = nil) {
+        guard let weightType = HKQuantityType.quantityType(forIdentifier: .bodyMass) else {
+            completion?()
+            return
+        }
 
-        let startDate = Calendar.current.date(byAdding: .year, value: -15, to: Date())
+        let startDate = Calendar.current.date(byAdding: .year, value: -15, to: Date()) // Look back up to 15 years
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: Date(), options: .strictStartDate)
 
         let query = HKSampleQuery(
@@ -61,9 +64,13 @@ class HealthKitManager: ObservableObject {
         ) { _, samples, error in
             guard let samples = samples as? [HKQuantitySample], error == nil else {
                 print("❌ Failed to fetch weight data: \(error?.localizedDescription ?? "Unknown error")")
+                DispatchQueue.main.async {
+                    completion?()
+                }
                 return
             }
 
+            // Transform the data into a simpler format: (Date, weight in kg)
             let weightData = samples.map {
                 ($0.startDate, $0.quantity.doubleValue(for: HKUnit.gramUnit(with: .kilo)))
             }
@@ -75,6 +82,7 @@ class HealthKitManager: ObservableObject {
                     let (date, weight) = first
                     print("👉 Most recent: \(weight) kg on \(date)")
                 }
+                completion?()
             }
         }
 
@@ -86,9 +94,11 @@ class HealthKitManager: ObservableObject {
         guard let latestWeightSample = weightData.first else { return nil }
         let latestWeight = latestWeightSample.weight
 
+        // Ignore recent days to avoid false positives
         let cutoffDate = Calendar.current.date(byAdding: .day, value: -daysToIgnore, to: Date())!
         let pastWeights = weightData.filter { $0.date < cutoffDate }
 
+        // Find the past weight closest to the latest one
         let closestWeightEntry = pastWeights.min(by: {
             abs($0.weight - latestWeight) < abs($1.weight - latestWeight)
         })
@@ -124,7 +134,7 @@ class HealthKitManager: ObservableObject {
             return
         }
 
-        // 👇 From here, everything you already had stays the same:
+        // Fetch selfies sorted by creation date
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
 
@@ -141,21 +151,23 @@ class HealthKitManager: ObservableObject {
             return
         }
 
+        // Look for selfie closest to target date (within ~30 days)
         var closestAsset: PHAsset?
         var smallestDiff: TimeInterval = .greatestFiniteMagnitude
 
         assets.enumerateObjects { asset, _, _ in
             if let creationDate = asset.creationDate {
                 let diff = abs(creationDate.timeIntervalSince(targetDate))
-                let oneYear: TimeInterval = 60 * 60 * 24 * 365
+                let photoDateGap: TimeInterval = 60 * 60 * 24 * 30
 
-                if diff < smallestDiff && diff <= oneYear {
+                if diff < smallestDiff && diff <= photoDateGap {
                     smallestDiff = diff
                     closestAsset = asset
                 }
             }
         }
 
+        // Fetch the image from the chosen asset
         if let asset = closestAsset {
             print("📸 Closest selfie: \(asset.creationDate ?? Date())")
             let size = CGSize(width: 200, height: 200)
@@ -170,7 +182,7 @@ class HealthKitManager: ObservableObject {
                 }
             }
         } else {
-            print("❌ No suitable selfie found within 1 year.")
+            print("❌ No suitable selfie found within 30 days.")
         }
     }
 }

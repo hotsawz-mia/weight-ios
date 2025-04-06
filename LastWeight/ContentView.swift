@@ -1,188 +1,226 @@
 import SwiftUI
-import UIKit // Needed for opening Settings
-import PhotosUI // For PHPicker to trigger full photo access
+import UIKit
+import PhotosUI
+import Combine
 
 struct ContentView: View {
-    @StateObject private var healthKitManager = HealthKitManager()
-    @State private var lastClosestWeight: (date: Date, weight: Double)? = nil
-    @State private var currentEmoji: String = "🎉"
-    @State private var showPermissionAlert = false
-    @State private var isHealthKitAuthorized = true
-    @State private var showPermissionPrompt = false
-    @State private var showUpgradePhotoAccessAlert = false
+    // MARK: - State and Storage
 
-    enum DateDisplayMode {
-        case daysAgo
-        case ageAtTime
-        case photo
+    @StateObject private var healthKitManager = HealthKitManager() // Manages HealthKit interactions
+    @State private var lastClosestWeight: (date: Date, weight: Double)? = nil // Holds the most recent matching weight
+    @State private var showPermissionAlert = false // Triggers alert if HealthKit permissions aren't granted
+    @State private var isHealthKitAuthorized = true // Reflects HealthKit permission status
+    @State private var showPermissionPrompt = false // Triggers photo access prompt
+    @State private var showUpgradePhotoAccessAlert = false // Triggers alert for upgrading limited photo access
+
+    @AppStorage("userDOB") private var storedDOB: Double = 0 // Stores the user's date of birth as timeIntervalSince1970
+    @State private var showDOBPicker = false // Controls visibility of date picker
+    @State private var dob: Date = Calendar.current.date(from: DateComponents(year: 1980, month: 1, day: 18)) ?? Date() // Local DOB state used in date picker
+
+    @State private var showCelebration = false // Controls celebratory emoji animation
+
+    // Enum for display mode selector
+    enum DateDisplayMode: String, CaseIterable {
+        case daysAgo = "Days"
+        case ageAtTime = "Age"
+        case photo = "Photo"
     }
 
-    @State private var dateDisplayMode: DateDisplayMode = .daysAgo
+    @State private var dateDisplayMode: DateDisplayMode = .daysAgo // Controls current display mode
 
-    let celebratoryEmojis = ["🎉", "🎊", "🏆", "🥳", "👏", "🚀", "🎈", "✨", "💪"]
+    // Computed property for safely accessing stored DOB
+    var dateOfBirth: Date {
+        if storedDOB > 0 {
+            return Date(timeIntervalSince1970: storedDOB)
+        } else {
+            return Calendar.current.date(from: DateComponents(year: 1980, month: 1, day: 18)) ?? Date()
+        }
+    }
+
+    var celebratoryEmojis = ["🎉", "🎊", "🏆", "🥳", "👏", "🚀", "🎈", "✨", "💪"]
 
     var body: some View {
         ZStack {
             Color(.systemBackground).ignoresSafeArea()
 
             NavigationView {
-                VStack(spacing: 30) {
-                    ZStack {
-                        Circle()
-                            .fill(Color(hex: "#FACC38"))
-                            .frame(width: 120, height: 120)
-                            .shadow(color: Color(hex: "#FACC38").opacity(0.5), radius: 10, x: 0, y: 4)
-
-                        Text(currentEmoji)
-                            .font(.system(size: 60))
-                            .transition(.scale.combined(with: .opacity))
-                            .animation(.spring(), value: currentEmoji)
+                VStack(spacing: 0) {
+                    // MARK: - Top Bar (Refresh Button)
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            refresh()
+                        }) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.title2)
+                                .foregroundColor(.gray)
+                        }
+                        .padding()
                     }
 
+                    // MARK: - Celebration Emoji
+                    if showCelebration {
+                        Text(celebratoryEmojis.randomElement() ?? "🎉")
+                            .font(.system(size: 48))
+                            .scaleEffect(1.3)
+                            .opacity(0.9)
+                            .transition(.scale.combined(with: .opacity))
+                            .animation(.spring(), value: showCelebration)
+                    }
+
+                    // MARK: - Main Display
                     if let closestWeight = lastClosestWeight {
-                        let currentWeight = healthKitManager.weightData.first?.weight ?? closestWeight.weight
-                        let difference = currentWeight - closestWeight.weight
-                        let cutoffDate = closestWeight.date
-
-                        VStack(spacing: 8) {
-                            Text("Weight déjà vu achieved 🌀")
-                                .font(.headline)
-                                .foregroundColor(.secondary)
-
-                            HStack(spacing: 8) {
-                                Group {
-                                    switch dateDisplayMode {
-                                    case .daysAgo, .ageAtTime:
-                                        Text(displayString(for: closestWeight.date))
-                                    case .photo:
-                                        if let image = healthKitManager.selfieForDate {
-                                            Image(uiImage: image)
-                                                .resizable()
-                                                .scaledToFit()
-                                                .frame(height: 100)
-                                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                                                .shadow(radius: 3)
-                                        } else {
-                                            Text("No photo found 📷")
-                                                .font(.subheadline)
-                                                .foregroundColor(.secondary)
-                                        }
+                        Group {
+                            switch dateDisplayMode {
+                            case .daysAgo:
+                                Text(displayString(for: closestWeight.date))
+                            case .ageAtTime:
+                                HStack(spacing: 4) {
+                                    Button(action: {
+                                        showDOBPicker = true
+                                    }) {
+                                        Image(systemName: "pencil")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundColor(.white)
+                                            .padding(6)
+                                            .background(Circle().fill(Color.blue))
                                     }
+                                    Text(displayString(for: closestWeight.date))
                                 }
-                                .font(.largeTitle)
-                                .fontWeight(.bold)
-                                .foregroundColor(.primary)
-
-                                Button(action: {
-                                    withAnimation {
-                                        switch dateDisplayMode {
-                                        case .daysAgo:
-                                            dateDisplayMode = .ageAtTime
-                                        case .ageAtTime:
-                                            dateDisplayMode = .photo
-                                        case .photo:
-                                            dateDisplayMode = .daysAgo
-                                        }
-                                    }
-                                }) {
-                                    Image(systemName: "arrow.triangle.2.circlepath")
-                                        .foregroundColor(.gray)
-                                        .imageScale(.medium)
+                            case .photo:
+                                if let image = healthKitManager.selfieForDate {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(maxWidth: .infinity, maxHeight: 300)
+                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                                        .shadow(radius: 3)
+                                } else {
+                                    Text("No photo found 📷")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
                                 }
-                                .buttonStyle(.plain)
-                            }
-
-                            if abs(difference) > 0.1 {
-                                Text("You're \(String(format: "%.1f", abs(difference))) kg away from matching that weight.")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            if let nextOlder = healthKitManager.weightData.first(where: {
-                                $0.date < cutoffDate && $0.weight < currentWeight
-                            }) {
-                                let nextDiff = currentWeight - nextOlder.weight
-                                Text("Lose \(String(format: "%.1f", nextDiff)) kg to match your weight from \(formatDateWithDaysAgo(nextOlder.date))")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
                             }
                         }
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                        .padding()
                     } else {
                         Text("Scanning your time-warped body data…")
                             .font(.headline)
                             .foregroundColor(.secondary)
+                            .padding()
                     }
-
-                    if !isHealthKitAuthorized {
-                        Label("Health access not granted", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                            .font(.caption)
-                    }
-
-                    VStack(spacing: 16) {
-                        Button(action: {
-                            print("🔄 Refresh button tapped")
-                            healthKitManager.checkHealthKitAuthorization { authorized in
-                                isHealthKitAuthorized = authorized
-                                if authorized {
-                                    print("✅ Refresh authorized. Fetching and updating.")
-                                    healthKitManager.fetchWeightData()
-                                    lastClosestWeight = healthKitManager.findLastClosestWeight()
-                                    if let match = lastClosestWeight, dateDisplayMode == .photo {
-                                        healthKitManager.fetchClosestSelfie(to: match.date)
-                                    }
-                                    currentEmoji = randomCelebratoryEmoji()
-                                } else {
-                                    print("❌ HealthKit access not granted. Prompt user.")
-                                    showPermissionAlert = true
-                                }
-                            }
-                        }) {
-                            Text("Refresh")
-                                .font(.headline)
-                                .padding()
-                                .frame(maxWidth: .infinity)
-                                .background(Color(hex: "#FACC38"))
-                                .foregroundColor(.black)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                                .shadow(color: Color.black.opacity(0.15), radius: 2, x: 0, y: 1)
-                        }
-
-                        NavigationLink(destination: LastWeightHistoryView(healthKitManager: healthKitManager)) {
-                            Text("View Weight History")
-                                .font(.subheadline)
-                                .foregroundColor(.blue)
-                        }
-                    }
-                    .padding(.horizontal)
 
                     Spacer()
-                    Text("Your past self says hi 👋")
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
-            }
-            .padding()
-            .onAppear {
-                print("📱 App appeared. Checking HealthKit and photo permissions…")
-                checkAndFetchHealthData()
-                let photoStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-                print("📸 Current photo auth status: \(readablePhotoStatus())")
 
-                if photoStatus == .limited {
-                    print("⚠️ User has limited photo access. Will show upgrade alert.")
-                    showUpgradePhotoAccessAlert = true
-                } else if photoStatus == .notDetermined {
-                    print("🟡 Photo permission not yet requested. Will show prompt.")
-                    showPermissionPrompt = true
-                } else {
-                    print("✅ Full photo access already granted. No need to prompt.")
+                    // MARK: - Footer Section
+                    VStack(spacing: 32) {
+                        if let currentWeight = healthKitManager.weightData.first?.weight {
+                            let cutoffDate = Date()
+                            let nextLower = healthKitManager.weightData
+                                .filter { $0.date < cutoffDate && $0.weight < currentWeight - 0.1 }
+                                .sorted(by: { $0.date > $1.date })
+                                .first
+
+                            if let match = nextLower {
+                                let diff = currentWeight - match.weight
+                                Text("Lose \(String(format: "%.1f", diff)) kg to match your weight from \(formatDateWithDaysAgo(match.date))")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal)
+                            }
+                        }
+
+                        // MARK: - Segmented Picker
+                        Picker("Display Mode", selection: $dateDisplayMode) {
+                            ForEach(DateDisplayMode.allCases, id: \.self) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                        .padding(.horizontal)
+                        .onChange(of: dateDisplayMode) { _, newValue in
+                            switch newValue {
+                            case .photo:
+                                if let match = lastClosestWeight {
+                                    healthKitManager.fetchClosestSelfie(to: match.date)
+                                }
+                            case .ageAtTime:
+                                if storedDOB == 0 {
+                                    showDOBPicker = true
+                                }
+                            case .daysAgo:
+                                break
+                            }
+                        }
+
+                        HStack(spacing: 32) {
+                            NavigationLink(destination: LastWeightHistoryView(healthKitManager: healthKitManager)) {
+                                Text("Weight History")
+                                    .font(.subheadline)
+                                    .foregroundColor(.blue)
+                            }
+
+                            Text("Your past self says hi 👋")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+
+                            Button(action: {
+                                if let url = URL(string: "mailto:lastweight@markchristianjames.com") {
+                                    UIApplication.shared.open(url)
+                                }
+                            }) {
+                                Text("Feedback")
+                                    .font(.subheadline)
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                    .padding(.bottom)
+                }
+                .navigationBarTitleDisplayMode(.inline)
+                .onAppear {
+                    checkAndFetchHealthData()
+                    if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited {
+                        showUpgradePhotoAccessAlert = true
+                    } else if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined {
+                        showPermissionPrompt = true
+                    }
+                    withAnimation {
+                        showCelebration = true
+                    }
                 }
             }
         }
-        .onChange(of: dateDisplayMode) {
-            if dateDisplayMode == .photo, let match = lastClosestWeight {
-                healthKitManager.fetchClosestSelfie(to: match.date)
+        // MARK: - Sheets and Alerts
+        .sheet(isPresented: $showPermissionPrompt) {
+            PhotoPermissionRequestView(onLimitedAccessDetected: {
+                showUpgradePhotoAccessAlert = true
+            })
+        }
+        .sheet(isPresented: $showDOBPicker) {
+            VStack(spacing: 16) {
+                Text("When were you born?")
+                    .font(.headline)
+
+                DatePicker("Select your date of birth", selection: $dob, displayedComponents: .date)
+                    .datePickerStyle(.wheel)
+                    .labelsHidden()
+
+                Button("Done") {
+                    storedDOB = dob.timeIntervalSince1970
+                    showDOBPicker = false
+                }
+                .padding()
+            }
+            .padding()
+        }
+        .onChange(of: storedDOB) {
+            if dateDisplayMode == .ageAtTime {
+                lastClosestWeight = healthKitManager.findLastClosestWeight()
             }
         }
         .alert("Health Access Needed", isPresented: $showPermissionAlert) {
@@ -191,7 +229,7 @@ struct ContentView: View {
                     UIApplication.shared.open(url)
                 }
             }
-            Button("Cancel", role: .cancel) { }
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text("""
 Last Weight needs access to your weight data in the Health app to work properly.
@@ -203,53 +241,63 @@ To enable it:
 4. Enable Body Mass access
 """)
         }
-        .sheet(isPresented: $showPermissionPrompt) {
-            PhotoPermissionRequestView {
-                showUpgradePhotoAccessAlert = true
-            }
-        }
-        .onChange(of: showPermissionPrompt) {
-            if showPermissionPrompt {
-                print("📤 Showing photo picker to trigger initial permission request")
-            }
-        }
         .alert("Want Better Selfie Matching?", isPresented: $showUpgradePhotoAccessAlert) {
             Button("Go to Settings") {
-                print("🔗 User tapped 'Go to Settings' to upgrade photo access")
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
                 }
             }
-            Button("Not Now", role: .cancel) { }
+            Button("Not Now", role: .cancel) {}
         } message: {
             Text("To allow Last Weight to find selfies from key moments, please enable full photo access in Settings.")
         }
     }
 
-    func checkAndFetchHealthData() {
-        print("📡 Checking HealthKit authorization…")
+    // MARK: - Refresh Handler
+    func refresh() {
+        print("🔄 Manual refresh triggered")
+
         healthKitManager.checkHealthKitAuthorization { authorized in
             isHealthKitAuthorized = authorized
-            print("🔁 Authorization result: \(authorized)")
+
             if authorized {
-                print("🚀 Fetching data from HealthKit")
-                healthKitManager.fetchWeightData()
-                lastClosestWeight = healthKitManager.findLastClosestWeight()
+                healthKitManager.fetchWeightData {
+                    lastClosestWeight = healthKitManager.findLastClosestWeight()
+
+                    if dateDisplayMode == .photo, let match = lastClosestWeight {
+                        healthKitManager.fetchClosestSelfie(to: match.date)
+                    }
+                }
             } else {
-                print("⚠️ HealthKit access missing.")
                 showPermissionAlert = true
             }
         }
     }
 
+    // MARK: - Initial HealthKit Fetch
+    func checkAndFetchHealthData() {
+        healthKitManager.checkHealthKitAuthorization { authorized in
+            isHealthKitAuthorized = authorized
+
+            if authorized {
+                healthKitManager.fetchWeightData {
+                    lastClosestWeight = healthKitManager.findLastClosestWeight()
+
+                    if dateDisplayMode == .photo, let match = lastClosestWeight {
+                        healthKitManager.fetchClosestSelfie(to: match.date)
+                    }
+                }
+            } else {
+                showPermissionAlert = true
+            }
+        }
+    }
+
+    // MARK: - Utility Formatters
     func formatDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         return formatter.string(from: date)
-    }
-
-    func randomCelebratoryEmoji() -> String {
-        celebratoryEmojis.randomElement() ?? "🎉"
     }
 
     func daysAgo(from date: Date) -> Int {
@@ -265,14 +313,11 @@ To enable it:
     func displayString(for date: Date) -> String {
         switch dateDisplayMode {
         case .daysAgo:
-            let days = daysAgo(from: date)
-            return "\(days) days ago"
+            return "\(daysAgo(from: date)) days ago"
         case .ageAtTime:
-            let ageComponents = Calendar.current.dateComponents(
-                [.year, .month],
-                from: DateComponents(calendar: .current, year: 1980, month: 1, day: 18).date!,
-                to: date
-            )
+            guard storedDOB != 0 else { return "Age unknown" }
+            let dobDate = dateOfBirth
+            let ageComponents = Calendar.current.dateComponents([.year, .month], from: dobDate, to: date)
             let years = ageComponents.year ?? 0
             let months = ageComponents.month ?? 0
             return "Age: \(years)y \(months)m"
@@ -280,23 +325,14 @@ To enable it:
             return ""
         }
     }
-
-    func readablePhotoStatus() -> String {
-        switch PHPhotoLibrary.authorizationStatus(for: .readWrite) {
-        case .authorized: return "authorized"
-        case .denied: return "denied"
-        case .limited: return "limited"
-        case .notDetermined: return "notDetermined"
-        case .restricted: return "restricted"
-        @unknown default: return "unknown"
-        }
-    }
 }
 
+// MARK: - Live Preview
 #Preview {
     ContentView()
 }
 
+// MARK: - Color Hex Extension
 extension Color {
     init(hex: String) {
         let scanner = Scanner(string: hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted))
@@ -315,3 +351,4 @@ extension Color {
         )
     }
 }
+
