@@ -19,6 +19,8 @@ struct ContentView: View {
 
     @State private var showCelebration = false // Controls celebratory emoji animation
 
+    @State private var currentWeightMatchDate: Date? // For daysAgo and ageAtTime
+    
     // Enum for display mode selector
     enum DateDisplayMode: String, CaseIterable {
         case daysAgo = "Days"
@@ -73,7 +75,33 @@ struct ContentView: View {
                         Group {
                             switch dateDisplayMode {
                             case .daysAgo:
-                                Text(displayString(for: closestWeight.date))
+                                if let matchDate = currentWeightMatchDate {
+                                    Text(displayString(for: matchDate))
+                                } else {
+                                    if let current = healthKitManager.weightData.first {
+                                        let cutoffDate = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+                                        let currentWeight = current.weight
+                                        let allWeights = healthKitManager.weightData.count
+                                        let matchingWeights = healthKitManager.weightData
+                                            .filter { $0.date < cutoffDate && $0.weight < currentWeight - 0.1 }
+
+                                        let message = """
+                                        No match found
+                                        Current weight: \(String(format: "%.1f", currentWeight))kg
+                                        Total records: \(allWeights)
+                                        Matching records: \(matchingWeights.count)
+                                        \(matchingWeights.first.map { "Example: \($0.weight)kg on \(formatDate($0.date))" } ?? "")
+                                        """
+
+                                        Text(message)
+                                            .font(.caption)
+                                            .foregroundColor(.red)
+                                            .multilineTextAlignment(.center)
+                                            .padding()
+                                    } else {
+                                        Text("No data available")
+                                    }
+                                }
                             case .ageAtTime:
                                 HStack(spacing: 4) {
                                     Button(action: {
@@ -117,20 +145,36 @@ struct ContentView: View {
 
                     // MARK: - Footer Section
                     VStack(spacing: 32) {
-                        if let currentWeight = healthKitManager.weightData.first?.weight {
+                        if let currentSample = healthKitManager.weightData.first {
+                            let currentWeight = currentSample.weight
+                            let currentWeightDate = currentSample.date
+
+                            // 👇 Show the current weight and its date
+                            // Text("Current weight: \(String(format: "%.1f", currentWeight)) kg on \(formatDate(currentWeightDate))")
+                                // .font(.footnote)
+                                // foregroundColor(.gray)
+                                // .padding(.bottom, 4)
+
                             let cutoffDate = Date()
                             let nextLower = healthKitManager.weightData
-                                .filter { $0.date < cutoffDate && $0.weight < currentWeight - 0.1 }
-                                .sorted(by: { $0.date > $1.date })
+                                .filter { $0.date < cutoffDate && $0.weight < currentWeight - 0.1 } // Apply small buffer
+                                .sorted(by: { $0.date > $1.date }) // Sort most recent first
                                 .first
 
-                            if let match = nextLower {
-                                let diff = currentWeight - match.weight
-                                Text("Lose \(String(format: "%.1f", diff)) kg to match your weight from \(formatDateWithDaysAgo(match.date))")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal)
+                            if let referenceWeight = lastClosestWeight {
+                                let previousLowerMatch = healthKitManager.weightData
+                                    .filter { $0.date < referenceWeight.date && $0.weight < referenceWeight.weight - 0.1 }
+                                    .sorted(by: { $0.date > $1.date })
+                                    .first
+
+                                if let match = previousLowerMatch {
+                                    let diff = referenceWeight.weight - match.weight
+                                    Text("Lose \(String(format: "%.1f", diff)) kg to match your weight from \(formatDateWithDaysAgo(match.date))")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                        .multilineTextAlignment(.center)
+                                        .padding(.horizontal)
+                                }
                             }
                         }
 
@@ -220,7 +264,20 @@ struct ContentView: View {
         }
         .onChange(of: storedDOB) {
             if dateDisplayMode == .ageAtTime {
+                   lastClosestWeight = healthKitManager.findLastClosestWeight()
+                   updateCurrentWeightMatchDate()
+               }
+            if dateDisplayMode == .ageAtTime {
                 lastClosestWeight = healthKitManager.findLastClosestWeight()
+                if let current = healthKitManager.weightData.first {
+                    let cutoffDate = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+                    let match = healthKitManager.weightData
+                        .filter { $0.date < cutoffDate && $0.weight < current.weight - 0.1 }
+                        .sorted(by: { $0.date > $1.date })
+                        .first
+
+                    currentWeightMatchDate = match?.date
+                }
             }
         }
         .alert("Health Access Needed", isPresented: $showPermissionAlert) {
@@ -263,6 +320,7 @@ To enable it:
             if authorized {
                 healthKitManager.fetchWeightData {
                     lastClosestWeight = healthKitManager.findLastClosestWeight()
+                    updateCurrentWeightMatchDate()
 
                     if dateDisplayMode == .photo, let match = lastClosestWeight {
                         healthKitManager.fetchClosestSelfie(to: match.date)
@@ -271,6 +329,17 @@ To enable it:
             } else {
                 showPermissionAlert = true
             }
+        }
+    }
+    func updateCurrentWeightMatchDate() {
+        if let current = healthKitManager.weightData.first {
+            let cutoffDate = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+            let match = healthKitManager.weightData
+                .filter { $0.date < cutoffDate && $0.weight < current.weight - 0.1 }
+                .sorted(by: { $0.date > $1.date })
+                .first
+
+            currentWeightMatchDate = match?.date
         }
     }
 
@@ -282,6 +351,7 @@ To enable it:
             if authorized {
                 healthKitManager.fetchWeightData {
                     lastClosestWeight = healthKitManager.findLastClosestWeight()
+                    updateCurrentWeightMatchDate()
 
                     if dateDisplayMode == .photo, let match = lastClosestWeight {
                         healthKitManager.fetchClosestSelfie(to: match.date)
