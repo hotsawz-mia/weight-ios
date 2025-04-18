@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import PhotosUI
 import Combine
+import FirebaseAnalytics
 
 struct ContentView: View {
     // MARK: - State and Storage
@@ -77,9 +78,11 @@ struct ContentView: View {
                             case .daysAgo:
                                 if let matchDate = currentWeightMatchDate {
                                     Text(displayString(for: matchDate))
+                                    // Text("🧪 Days mode date: \(formatDate(matchDate))") // ← DEBUG
+
                                 } else {
                                     if let current = healthKitManager.weightData.first {
-                                        let cutoffDate = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+                                        let cutoffDate = Calendar.current.date(byAdding: .day, value: -weightMatchCutoffDays, to: Date())!
                                         let currentWeight = current.weight
                                         let allWeights = healthKitManager.weightData.count
                                         let matchingWeights = healthKitManager.weightData
@@ -114,6 +117,7 @@ struct ContentView: View {
                                             .background(Circle().fill(Color.blue))
                                     }
                                     Text(displayString(for: closestWeight.date))
+                                    // Text("🧪 Age mode date: \(formatDate(closestWeight.date))") // ← DEBUG
                                 }
                             case .photo:
                                 if let image = healthKitManager.selfieForDate {
@@ -187,6 +191,10 @@ struct ContentView: View {
                         .pickerStyle(SegmentedPickerStyle())
                         .padding(.horizontal)
                         .onChange(of: dateDisplayMode) { _, newValue in
+                            Analytics.logEvent("switched_display_mode", parameters: [
+                                "mode": newValue.rawValue
+                            ])
+
                             switch newValue {
                             case .photo:
                                 if let match = lastClosestWeight {
@@ -195,6 +203,7 @@ struct ContentView: View {
                             case .ageAtTime:
                                 if storedDOB == 0 {
                                     showDOBPicker = true
+                                    Analytics.logEvent("shown_dob_picker", parameters: nil)
                                 }
                             case .daysAgo:
                                 break
@@ -207,12 +216,16 @@ struct ContentView: View {
                                     .font(.subheadline)
                                     .foregroundColor(.blue)
                             }
+                            .simultaneousGesture(TapGesture().onEnded {
+                                Analytics.logEvent("tapped_weight_history", parameters: nil)
+                            })
 
                             Text("Your past self says hi 👋")
                                 .font(.caption)
                                 .foregroundColor(.gray)
 
                             Button(action: {
+                                Analytics.logEvent("tapped_feedback", parameters: nil)
                                 if let url = URL(string: "mailto:lastweight@markchristianjames.com") {
                                     UIApplication.shared.open(url)
                                 }
@@ -228,11 +241,25 @@ struct ContentView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .onAppear {
                     checkAndFetchHealthData()
-                    if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited {
+                    
+//                    Analytics.logEvent("debug_test_event", parameters: [
+//                        "source": "launch"
+//                    ])
+//                    
+//                    print("📡 Logging debug event now...")
+//                    Analytics.logEvent("debug_test_event", parameters: ["context": "manual_debug"])
+                    
+                    let photoStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+
+                    if photoStatus == .authorized {
+                        Analytics.logEvent("accepted_photo_permission", parameters: nil)
+                    } else if photoStatus == .limited {
                         showUpgradePhotoAccessAlert = true
-                    } else if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined {
+                    } else if photoStatus == .notDetermined {
+                        Analytics.logEvent("shown_photo_permission", parameters: nil)
                         showPermissionPrompt = true
                     }
+
                     withAnimation {
                         showCelebration = true
                     }
@@ -256,6 +283,10 @@ struct ContentView: View {
 
                 Button("Done") {
                     storedDOB = dob.timeIntervalSince1970
+                    Analytics.logEvent("set_dob", parameters: [
+                        "year": Calendar.current.component(.year, from: dob),
+                        "month": Calendar.current.component(.month, from: dob)
+                    ])
                     showDOBPicker = false
                 }
                 .padding()
@@ -270,7 +301,7 @@ struct ContentView: View {
             if dateDisplayMode == .ageAtTime {
                 lastClosestWeight = healthKitManager.findLastClosestWeight()
                 if let current = healthKitManager.weightData.first {
-                    let cutoffDate = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+                    let cutoffDate = Calendar.current.date(byAdding: .day, value: -weightMatchCutoffDays, to: Date())!
                     let match = healthKitManager.weightData
                         .filter { $0.date < cutoffDate && $0.weight < current.weight - 0.1 }
                         .sorted(by: { $0.date > $1.date })
@@ -313,6 +344,7 @@ To enable it:
     // MARK: - Refresh Handler
     func refresh() {
         print("🔄 Manual refresh triggered")
+        Analytics.logEvent("tapped_refresh", parameters: nil)
 
         healthKitManager.checkHealthKitAuthorization { authorized in
             isHealthKitAuthorized = authorized
@@ -333,7 +365,7 @@ To enable it:
     }
     func updateCurrentWeightMatchDate() {
         if let current = healthKitManager.weightData.first {
-            let cutoffDate = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+            let cutoffDate = Calendar.current.date(byAdding: .day, value: -weightMatchCutoffDays, to: Date())!
             let match = healthKitManager.weightData
                 .filter { $0.date < cutoffDate && $0.weight < current.weight - 0.1 }
                 .sorted(by: { $0.date > $1.date })
@@ -349,6 +381,7 @@ To enable it:
             isHealthKitAuthorized = authorized
 
             if authorized {
+                Analytics.logEvent("accepted_healthkit_permission", parameters: nil)
                 healthKitManager.fetchWeightData {
                     lastClosestWeight = healthKitManager.findLastClosestWeight()
                     updateCurrentWeightMatchDate()
@@ -358,6 +391,7 @@ To enable it:
                     }
                 }
             } else {
+                Analytics.logEvent("shown_healthkit_permission", parameters: nil)
                 showPermissionAlert = true
             }
         }

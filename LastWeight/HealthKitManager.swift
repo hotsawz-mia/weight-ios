@@ -7,6 +7,9 @@ func hasLimitedPhotoAccess() -> Bool {
     return PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited
 }
 
+// MARK: - Shared constant for cutoff days
+let weightMatchCutoffDays = 15
+
 // MARK: - HealthKitManager: Handles permissions and weight data from HealthKit
 class HealthKitManager: ObservableObject {
     private let healthStore = HKHealthStore() // Interface to HealthKit
@@ -45,7 +48,7 @@ class HealthKitManager: ObservableObject {
     }
 
     // MARK: - Fetch Weight Data from HealthKit with optional completion handler
-    func fetchWeightData(daysToIgnore: Int = 7, completion: (() -> Void)? = nil) {
+    func fetchWeightData(daysToIgnore: Int = weightMatchCutoffDays, completion: (() -> Void)? = nil) {
         guard let weightType = HKQuantityType.quantityType(forIdentifier: .bodyMass) else {
             completion?()
             return
@@ -90,20 +93,15 @@ class HealthKitManager: ObservableObject {
     }
 
     // MARK: - Logic to Find "Last Time You Were This Weight"
-    func findLastClosestWeight(daysToIgnore: Int = 14) -> (date: Date, weight: Double)? {
-        guard let latestWeightSample = weightData.first else { return nil }
-        let latestWeight = latestWeightSample.weight
+    func findLastClosestWeight(daysToIgnore: Int = weightMatchCutoffDays) -> (date: Date, weight: Double)? {
+        guard let current = weightData.first else { return nil }
 
-        // Ignore recent days to avoid false positives
         let cutoffDate = Calendar.current.date(byAdding: .day, value: -daysToIgnore, to: Date())!
-        let pastWeights = weightData.filter { $0.date < cutoffDate }
 
-        // Find the past weight closest to the latest one
-        let closestWeightEntry = pastWeights.min(by: {
-            abs($0.weight - latestWeight) < abs($1.weight - latestWeight)
-        })
-
-        return closestWeightEntry
+        return weightData
+            .filter { $0.date < cutoffDate && $0.weight < current.weight - 0.1 }
+            .sorted(by: { $0.date > $1.date })
+            .first
     }
 
     // MARK: - Fetch Selfie Closest to a Given Date
