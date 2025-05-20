@@ -4,6 +4,9 @@ import SwiftUI // Import SwiftUI for building the UI
 struct LastWeightHistoryView: View {
     // Connects to the shared HealthKit manager (data must be observed)
     @ObservedObject var healthKitManager: HealthKitManager
+    
+    // Use the user's preferred weight unit
+    @AppStorage("preferredWeightUnit") private var weightUnit: WeightUnit = .kg
 
     var body: some View {
         VStack(spacing: 20) {
@@ -14,8 +17,9 @@ struct LastWeightHistoryView: View {
 
             // 📜 List of weight records
             List(healthKitManager.weightData, id: \.date) { entry in
-                Text("\(formatDate(entry.date)): \(entry.weight, specifier: "%.1f") kg")
-                // Example: "Mar 28, 2025: 72.3 kg"
+                let convertedWeight = weightUnit.convert(entry.weight)
+                Text("\(formatDate(entry.date)): \(convertedWeight, specifier: "%.1f") \(weightUnit.rawValue)")
+                // Example: "Mar 28, 2025: 72.3 kg" or "Mar 28, 2025: 159.2 lb"
             }
         }
         .padding()
